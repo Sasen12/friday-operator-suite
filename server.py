@@ -24,5 +24,8 @@ register_all_tools(mcp)
 register_all_prompts(mcp)
 register_all_resources(mcp)
 
+def main():
+    mcp.run(transport='sse')
+
 if __name__ == "__main__":
-    mcp.run()
+    main()
