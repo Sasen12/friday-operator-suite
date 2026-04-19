@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import warnings
@@ -41,7 +43,9 @@ logger = logging.getLogger("friday-local")
 
 MCP_SERVER_URL = os.getenv("FRIDAY_MCP_URL", "http://127.0.0.1:8000/sse")
 OLLAMA_CHAT_URL = os.getenv("FRIDAY_OLLAMA_CHAT_URL", "http://127.0.0.1:11434/api/chat")
+OLLAMA_HEALTH_URL = os.getenv("FRIDAY_OLLAMA_HEALTH_URL", "http://127.0.0.1:11434/api/tags")
 OLLAMA_MODEL = os.getenv("OLLAMA_LLM_MODEL", "gemma4")
+AUTO_START_OLLAMA = os.getenv("FRIDAY_AUTO_START_OLLAMA", "1").strip().lower() in {"1", "true", "yes", "on"}
 TTS_SPEED = float(os.getenv("FRIDAY_TTS_SPEED", "1.15") or 1.15)
 WAKE_WORD_MODE = os.getenv("FRIDAY_WAKE_WORD_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -152,6 +156,50 @@ def _pcm16_to_numpy(audio_bytes: bytes, num_channels: int) -> np.ndarray:
     if num_channels > 1:
         audio = audio.reshape(-1, num_channels)
     return audio
+
+
+def _ollama_is_running() -> bool:
+    try:
+        response = httpx.get(OLLAMA_HEALTH_URL, timeout=2.0)
+        return response.is_success
+    except Exception:
+        return False
+
+
+def _ensure_ollama_running() -> bool:
+    if _ollama_is_running():
+        return True
+    if not AUTO_START_OLLAMA:
+        return False
+
+    ollama_exe = shutil.which("ollama")
+    if not ollama_exe:
+        logger.warning("Ollama CLI was not found on PATH.")
+        return False
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+    try:
+        subprocess.Popen(
+            [ollama_exe, "serve"],
+            cwd=str(Path.cwd()),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        logger.warning("Failed to launch Ollama automatically: %s", exc)
+        return False
+
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        if _ollama_is_running():
+            logger.info("Ollama daemon is ready.")
+            return True
+        time.sleep(0.5)
+
+    logger.warning("Timed out waiting for Ollama to start.")
+    return False
 
 
 def _play_frames(frames: list[LocalAudioFrame]) -> None:
@@ -352,7 +400,16 @@ class LocalFridayRuntime:
             payload["format"] = "json"
 
         async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(OLLAMA_CHAT_URL, json=payload)
+            try:
+                response = await client.post(OLLAMA_CHAT_URL, json=payload)
+            except httpx.ConnectError as exc:
+                logger.warning("Ollama is not reachable at %s: %s", OLLAMA_CHAT_URL, exc)
+                if await asyncio.to_thread(_ensure_ollama_running):
+                    response = await client.post(OLLAMA_CHAT_URL, json=payload)
+                else:
+                    raise RuntimeError(
+                        "Ollama is not running. Start the local Ollama app or run `ollama serve`."
+                    ) from exc
             response.raise_for_status()
             data = response.json()
 
