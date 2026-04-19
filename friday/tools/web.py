@@ -8,6 +8,8 @@ import asyncio  # Required for parallel execution
 import re
 from datetime import datetime
 
+from . import desktop
+
 SEED_FEEDS = [
     'https://feeds.bbci.co.uk/news/world/rss.xml',
     'https://www.cnbc.com/id/100727362/device/rss/rss.html',
@@ -102,10 +104,11 @@ def register(mcp):
         """
         import webbrowser
         url = "https://worldmonitor.app/"
-        
+
         try:
-            # This opens the URL in the default browser (Chrome/Edge/Safari)
-            webbrowser.open(url)
+            if not desktop._open_url_in_firefox(url, focus=True, timeout=12.0):
+                # Fall back to the system default browser if Firefox is unavailable.
+                webbrowser.open(url)
             return "Displaying the World Monitor on your primary screen now, sir."
         except Exception as e:
             return f"I'm unable to initialize the visual monitor: {str(e)}"

@@ -131,6 +131,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+desktop-app/node_modules/
+*.log
 
 # Spyder project settings
 .spyderproject

@@ -1,164 +1,168 @@
-# F.R.I.D.A.Y. — Tony Stark Demo
+# F.R.I.D.A.Y. - Tony Stark Demo
 
-> *"Fully Responsive Intelligent Digital Assistant for You"*
+F.R.I.D.A.Y. is a local AI control stack for Windows that combines voice, browser, desktop, file, and workflow automation in one place.
 
-A Tony Stark-inspired AI assistant split into two cooperating pieces:
+It has three main pieces:
 
-| Component | What it is |
-|-----------|-----------|
-| **MCP Server** (`uv run friday`) | A [FastMCP](https://github.com/jlowin/fastmcp) server that exposes tools (news, web search, system info, …) over SSE. Think of it as the Stark Industries backend — it does the actual work. |
-| **Voice Agent** (`uv run friday_voice`) | A [LiveKit Agents](https://github.com/livekit/agents) voice pipeline that listens to your microphone, reasons with an LLM (Gemini 2.5 Flash by default), and speaks back with OpenAI TTS — all while pulling tools from the MCP server in real time. |
-
-Demo: [Instagram reel](https://www.instagram.com/p/DW2HjYtkwg_/)
-
-[![Demo Video Guide](https://img.youtube.com/vi/mMY9swqe3BI/maxresdefault.jpg)](https://www.youtube.com/watch?v=mMY9swqe3BI)
+| Component | What it does |
+|-----------|--------------|
+| MCP server (`friday`) | Exposes tools over SSE so the assistant can act on the machine, files, browser, and workflows. |
+| Voice agent (`friday_voice`) | Connects to LiveKit, listens to your microphone, reasons with an LLM, and calls the MCP tools in real time. |
+| Desktop shell (`run-friday-app.ps1`) | Opens a local control deck with the embedded LiveKit view and quick actions. |
 
 ---
 
-## How it works
+## What Friday can do
 
-```
-Microphone ──► STT (Sarvam Saaras v3)
-                    │
-                    ▼
-             LLM (Gemini 2.5 Flash)  ◄──────► MCP Server (FastMCP / SSE)
-                    │                              ├─ get_world_news
-                    ▼                              ├─ open_world_monitor
-             TTS (OpenAI nova)                     ├─ search_web
-                    │                              └─ …more tools
-                    ▼
-             Speaker / LiveKit room
-```
-
-The voice agent connects to the MCP server via SSE at `http://127.0.0.1:8000/sse` (auto-resolved to the Windows host IP when running inside WSL).
+- Control Windows apps, windows, shortcuts, and common system surfaces
+- Open and focus apps, search installed programs, and move or resize windows
+- Type, click, scroll, drag, and use OCR when a control is not directly accessible
+- Work with files and folders, including read, write, move, copy, hash, zip, unzip, search, and delete actions
+- Run PowerShell, shell commands, and process management tasks
+- Search inside files and replace text in place
+- Open Obsidian, Firefox, and File Explorer through dedicated workflows
+- Work with Gmail and Google Calendar through browser-backed flows
+- Automate websites with Playwright
+- Save, list, run, and delete reusable macros
+- Turn a prompt into a short-form vertical video project and render it locally when a ShortsMaker checkout is available
 
 ---
 
-## Project structure
+## Project Layout
 
-```
+```text
 friday-tony-stark-demo/
-├── server.py           # uv run friday  → starts the MCP server (SSE on :8000)
-├── agent_friday.py     # uv run friday_voice → starts the LiveKit voice agent
-├── pyproject.toml
-├── .env.example        # copy → .env and fill in your keys
-│
-└── friday/             # MCP server package
-    ├── config.py       # env-var loading & app-wide settings
-    ├── tools/          # MCP tools (callable by the LLM)
-    │   ├── web.py      # search_web, fetch_url, get_world_news, open_world_monitor
-    │   ├── system.py   # get_current_time, get_system_info
-    │   └── utils.py    # format_json, word_count
-    ├── prompts/        # MCP prompt templates (summarize, explain_code, …)
-    └── resources/      # MCP resources exposed to clients (friday://info)
+|-- server.py            # MCP server entry point
+|-- agent_friday.py      # LiveKit voice agent entry point
+|-- desktop-app/         # Electron control deck
+|-- friday/
+|   |-- config.py
+|   |-- prompts/
+|   |-- resources/
+|   |-- tools/
+|   |   |-- browser.py
+|   |   |-- desktop.py
+|   |   |-- macros.py
+|   |   |-- office.py
+|   |   |-- shorts.py
+|   |   |-- system.py
+|   |   |-- utils.py
+|   |   |-- web.py
+|   |   `-- workflows.py
+|-- FRIDAY_CHEAT_SHEET.md
+|-- run-friday.ps1
+|-- run-friday-app.ps1
+|-- pyproject.toml
+`-- .env.example
 ```
 
 ---
 
-## Quick start
+## Quick Start
 
 ### 1. Prerequisites
 
-- Python ≥ 3.11
-- [`uv`](https://github.com/astral-sh/uv) — `pip install uv` or `curl -Lsf https://astral.sh/uv/install.sh | sh`
-- A [LiveKit Cloud](https://cloud.livekit.io) project (free tier works)
+- Python 3.11 or newer
+- `uv`
+- A LiveKit Cloud project
 
-### 2. Clone & install
+### 2. Clone and install
 
-```bash
+```powershell
 git clone https://github.com/SAGAR-TAMANG/friday-tony-stark-demo.git
 cd friday-tony-stark-demo
-uv sync          # creates .venv and installs all dependencies
+uv sync
 ```
 
 ### 3. Set up environment
 
-```bash
-cp .env.example .env
-# Open .env and fill in your API keys (see the section below)
+```powershell
+Copy-Item .env.example .env
 ```
 
-### 4. Run — two terminals
+Fill in the keys in `.env` before starting the app.
 
-**Terminal 1 — MCP server** (must start first)
+### 4. Run Friday
 
-```bash
-uv run friday
+For the quickest path on Windows:
+
+```powershell
+.\run-friday.ps1
 ```
 
-Starts the FastMCP server on `http://127.0.0.1:8000/sse`. The voice agent connects here to fetch its tools.
+For the local desktop shell:
 
-**Terminal 2 — Voice agent**
-
-```bash
-uv run friday_voice
+```powershell
+.\run-friday-app.ps1
 ```
 
-Starts the LiveKit voice agent in **dev mode** — it joins a LiveKit room and begins listening. Open the [LiveKit Agents Playground](https://agents-playground.livekit.io) and connect to your room to talk to FRIDAY.
+You can also run the pieces separately:
 
----
+```powershell
+friday
+friday_voice dev
+```
 
-## `uv run friday` vs `uv run friday_voice`
+Or use the text console instead of the LiveKit browser session:
 
-| Command | Entry point | What it does |
-|---------|------------|--------------|
-| `uv run friday` | `server.py → main()` | Launches the **FastMCP server** over SSE transport on port 8000. This is the "brain backend" — it registers all tools, prompts, and resources that the LLM can call. |
-| `uv run friday_voice` | `agent_friday.py → dev()` | Launches the **LiveKit voice agent**. It builds the STT / LLM / TTS pipeline, connects to your LiveKit room, and wires up the MCP server as a tool source. The `dev()` wrapper auto-injects the `dev` CLI flag so you don't have to type it manually. |
-
-> Both processes must run **simultaneously**. The voice agent calls the MCP server in real time whenever it needs a tool (e.g. fetching news).
-
----
-
-## Environment variables
-
-Copy `.env.example` → `.env` and fill in the values below.
-
-| Variable | Required | Where to get it |
-|----------|----------|----------------|
-| `LIVEKIT_URL` | ✅ | [LiveKit Cloud dashboard](https://cloud.livekit.io) → your project URL |
-| `LIVEKIT_API_KEY` | ✅ | LiveKit Cloud → API Keys |
-| `LIVEKIT_API_SECRET` | ✅ | LiveKit Cloud → API Keys |
-| `GROQ_API_KEY` | optional | [console.groq.com](https://console.groq.com) — only needed if you switch `LLM_PROVIDER` to `"groq"` |
-| `SARVAM_API_KEY` | ✅ (default STT) | [dashboard.sarvam.ai](https://dashboard.sarvam.ai) |
-| `OPENAI_API_KEY` | ✅ (default TTS) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `DEEPGRAM_API_KEY` | optional | [console.deepgram.com](https://console.deepgram.com) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | optional | GCP service-account JSON path — only for `STT_PROVIDER = "google"` |
-| `GOOGLE_API_KEY` | ✅ (default LLM) | [aistudio.google.com](https://aistudio.google.com/projects) |
-| `SUPABASE_URL` | optional | [supabase.com](https://supabase.com) — for the ticketing tool |
-| `SUPABASE_API_KEY` | optional | Supabase project → API settings |
-
----
-
-## Switching providers
-
-Open `agent_friday.py` and change the provider constants at the top:
-
-```python
-STT_PROVIDER = "sarvam"   # "sarvam" | "whisper"
-LLM_PROVIDER = "gemini"   # "gemini" | "openai"
-TTS_PROVIDER = "openai"   # "openai" | "sarvam"
+```powershell
+friday_voice console --text
 ```
 
 ---
 
-## Adding a new tool
+## Short-Form Video Workflow
 
-1. Create or open a file in `friday/tools/`
-2. Define a `register(mcp)` function and decorate tools with `@mcp.tool()`
-3. Import and call `register(mcp)` inside `friday/tools/__init__.py`
+Friday can build a short-form video project from a plain description or script and save it into a dated folder under `C:/Edits/AI Vids` by default.
 
-The MCP server will pick it up on next start.
+- If `SHORTS_MAKER_DIR` points to a local `shorts_maker` checkout, Friday will try to render the final MP4 locally.
+- If the checkout is missing, Friday still prepares the project folder with the title, prompt, script, manifest, and render notes so you can review or upload later.
+- You can override the output root with `FRIDAY_SHORTS_OUTPUT_ROOT` if you want a different folder.
+
+Example prompt:
+
+```text
+Make a YouTube Short about the 3 biggest mistakes people make with productivity.
+Keep it punchy, vertical, and save the final project locally.
+```
 
 ---
 
-## Tech stack
+## Environment Variables
 
-- **[FastMCP](https://github.com/jlowin/fastmcp)** — MCP server framework
-- **[LiveKit Agents](https://github.com/livekit/agents)** — real-time voice pipeline
-- **Sarvam Saaras v3** — STT (Indian-English optimised)
-- **Google Gemini 2.5 Flash** — LLM
-- **OpenAI TTS** (`nova` voice) — TTS
-- **[uv](https://github.com/astral-sh/uv)** — fast Python package manager
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `LIVEKIT_URL` | yes | Your LiveKit Cloud websocket URL |
+| `LIVEKIT_API_KEY` | yes | LiveKit API key |
+| `LIVEKIT_API_SECRET` | yes | LiveKit API secret |
+| `OPENAI_API_KEY` | yes | Used for the LLM and default TTS path |
+| `FRIDAY_SHORTS_OUTPUT_ROOT` | no | Default output folder for short-form video projects |
+| `SHORTS_MAKER_DIR` | no | Path to your local `shorts_maker` checkout |
+| `GROQ_API_KEY` | no | Optional provider key |
+| `SARVAM_API_KEY` | no | Optional STT provider key |
+| `DEEPGRAM_API_KEY` | no | Optional speech-related key |
+| `GOOGLE_APPLICATION_CREDENTIALS` | no | Optional Google Cloud auth path |
+| `SUPABASE_URL` | no | Optional ticketing backend URL |
+| `SUPABASE_API_KEY` | no | Optional ticketing backend key |
+| `GOOGLE_API_KEY` | no | Optional Google AI Studio key |
+
+---
+
+## Safety
+
+Friday asks for confirmation before destructive actions, overwriting files, force-closing programs, and sending email.
+
+When a GUI is not needed, it should prefer file, shell, and workflow tools over manual clicking.
+
+---
+
+## Tech Stack
+
+- FastMCP
+- LiveKit Agents
+- Playwright
+- Electron
+- Python 3.11+
 
 ---
 

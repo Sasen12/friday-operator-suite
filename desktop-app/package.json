@@ -1,0 +1,14 @@
+{
+  "name": "friday-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Futuristic desktop shell for FRIDAY.",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "node launch-electron.cjs",
+    "dev": "node launch-electron.cjs"
+  },
+  "devDependencies": {
+    "electron": "^41.2.0"
+  }
+}
