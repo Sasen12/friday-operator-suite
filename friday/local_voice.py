@@ -175,10 +175,6 @@ def _record_utterance(
     silence_seconds: float = 1.1,
     block_size: int = 1024,
 ) -> tuple[bytes, int] | None:
-    pre_roll = deque(maxlen=max(4, int(0.35 * sample_rate / block_size)))
-    blocks: list[np.ndarray] = []
-    started = False
-    silence_run = 0
     max_blocks = max(1, int(max_seconds * sample_rate / block_size))
     threshold_factor = 32768.0
 
@@ -191,50 +187,84 @@ def _record_utterance(
 
     recorder_blocksize = max(block_size * 4, 4096)
     record_chunk_frames = max(512, block_size)
+    recorder_attempts: list[dict[str, Any]] = [
+        {
+            "samplerate": sample_rate,
+            "channels": capture_channels,
+            "blocksize": recorder_blocksize,
+        },
+        {
+            "samplerate": sample_rate,
+            "channels": capture_channels,
+        },
+        {
+            "samplerate": sample_rate,
+            "channels": 1,
+        },
+        {
+            "samplerate": sample_rate,
+        },
+    ]
 
-    recorder_kwargs: dict[str, Any] = {
-        "samplerate": sample_rate,
-        "channels": capture_channels,
-        "blocksize": recorder_blocksize,
-    }
-    if os.getenv("FRIDAY_AUDIO_EXCLUSIVE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        recorder_kwargs["exclusive_mode"] = True
+    def _capture_with_recorder(recorder_kwargs: dict[str, Any]) -> list[np.ndarray]:
+        pre_roll = deque(maxlen=max(4, int(0.35 * sample_rate / block_size)))
+        blocks: list[np.ndarray] = []
+        started = False
+        silence_run = 0
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            category=getattr(sc, "SoundcardRuntimeWarning", RuntimeWarning),
-            message=".*data discontinuity in recording.*",
-        )
-        with microphone.recorder(**recorder_kwargs) as recorder:
-            for _ in range(max_blocks):
-                data = recorder.record(numframes=record_chunk_frames)
-                block = np.asarray(data, dtype=np.float32)
-                if block.size == 0:
-                    continue
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=getattr(sc, "SoundcardRuntimeWarning", RuntimeWarning),
+                message=".*data discontinuity in recording.*",
+            )
+            with microphone.recorder(**recorder_kwargs) as recorder:
+                for _ in range(max_blocks):
+                    data = recorder.record(numframes=record_chunk_frames)
+                    block = np.asarray(data, dtype=np.float32)
+                    if block.size == 0:
+                        continue
 
-                if block.ndim == 1:
-                    block = block.reshape(-1, 1)
+                    if block.ndim == 1:
+                        block = block.reshape(-1, 1)
 
-                mono = block.mean(axis=1)
-                rms = float(np.sqrt(np.mean(mono * mono)))
+                    mono = block.mean(axis=1)
+                    rms = float(np.sqrt(np.mean(mono * mono)))
 
-                if not started:
-                    pre_roll.append(block.copy())
-                    if rms >= start_threshold:
-                        started = True
-                        blocks.extend(pre_roll)
-                        pre_roll.clear()
+                    if not started:
+                        pre_roll.append(block.copy())
+                        if rms >= start_threshold:
+                            started = True
+                            blocks.extend(pre_roll)
+                            pre_roll.clear()
+                            silence_run = 0
+                        continue
+
+                    blocks.append(block.copy())
+                    if rms < stop_threshold:
+                        silence_run += 1
+                        if (silence_run * record_chunk_frames / sample_rate) >= silence_seconds:
+                            break
+                    else:
                         silence_run = 0
-                    continue
 
-                blocks.append(block.copy())
-                if rms < stop_threshold:
-                    silence_run += 1
-                    if (silence_run * record_chunk_frames / sample_rate) >= silence_seconds:
-                        break
-                else:
-                    silence_run = 0
+        return blocks
+
+    blocks: list[np.ndarray] = []
+    last_error: Exception | None = None
+    for recorder_kwargs in recorder_attempts:
+        try:
+            blocks = _capture_with_recorder(recorder_kwargs)
+        except RuntimeError as exc:
+            if "invalid argument" not in str(exc).lower():
+                raise
+            last_error = exc
+            continue
+        if blocks:
+            break
+    else:
+        if last_error is not None:
+            raise last_error
 
     if not blocks:
         return None
