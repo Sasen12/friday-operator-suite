@@ -9,6 +9,8 @@ import re
 import sys
 import time
 import warnings
+import tempfile
+import wave
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -21,6 +23,11 @@ import numpy as np
 import soundcard as sc
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
+
+if sys.platform == "win32":
+    import winsound
+else:
+    winsound = None
 
 from friday.speech import (
     LocalAudioFrame,
@@ -148,6 +155,35 @@ def _pcm16_to_numpy(audio_bytes: bytes, num_channels: int) -> np.ndarray:
 
 
 def _play_frames(frames: list[LocalAudioFrame]) -> None:
+    if not frames:
+        return
+
+    sample_rate = int(frames[0].sample_rate)
+    num_channels = max(1, int(frames[0].num_channels or 1))
+    pcm_chunks = [bytes(frame.data) for frame in frames if frame.data]
+    if not pcm_chunks:
+        return
+
+    if winsound is not None:
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as handle:
+                temp_path = handle.name
+            with wave.open(temp_path, "wb") as wav_file:
+                wav_file.setnchannels(num_channels)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                for chunk in pcm_chunks:
+                    wav_file.writeframes(chunk)
+            winsound.PlaySound(temp_path, winsound.SND_FILENAME)
+            return
+        except Exception as exc:
+            logger.warning("Windows audio playback failed, falling back to soundcard: %s", exc)
+        finally:
+            if temp_path:
+                with contextlib.suppress(FileNotFoundError, OSError):
+                    os.unlink(temp_path)
+
     speaker = sc.default_speaker()
     for frame in frames:
         audio = _pcm16_to_numpy(bytes(frame.data), int(frame.num_channels)).astype(np.float32)
@@ -441,8 +477,12 @@ class LocalFridayRuntime:
         if not utterance:
             return
         print(f"FRIDAY: {utterance}", flush=True)
-        frames = await synthesize_text_frames(utterance, self.local_speech)
-        _play_frames(frames)
+        try:
+            frames = await synthesize_text_frames(utterance, self.local_speech)
+            _play_frames(frames)
+        except Exception as exc:
+            logger.exception("Local speech playback failed: %s", exc)
+            print(f"ERROR: {exc}", flush=True)
 
     async def _handle_user_text(self, session: ClientSession, text: str) -> None:
         utterance = _normalize_message_text(text)
@@ -549,7 +589,10 @@ async def _run(mode: str) -> None:
     )
 
     async with _local_runtime_session() as (runtime, session):
-        await runtime.speak("You're awake late at night, boss? What are you up to?")
+        try:
+            await runtime.speak("You're awake late at night, boss? What are you up to?")
+        except Exception as exc:
+            logger.warning("Startup greeting failed: %s", exc)
         if mode == "console":
             await runtime.console_loop(session)
         else:
