@@ -9,8 +9,10 @@ It has three main pieces:
 | Component | What it does |
 |-----------|--------------|
 | MCP server (`friday`) | Exposes tools over SSE so the assistant can act on the machine, files, browser, and workflows. |
-| Voice agent (`friday_voice`) | Connects to LiveKit, listens to your microphone, reasons with an LLM, and calls the MCP tools in real time. |
-| Desktop shell (`run-friday-app.ps1`) | Opens a local control deck with the embedded LiveKit view and quick actions. |
+| Local voice runtime (`local_friday.py`) | Runs fully on-device with Whisper, Piper, Ollama, and the MCP tools. |
+| Desktop shell (`run-friday-app.ps1`) | Opens a local control deck and launches the on-device voice/runtime loop. |
+
+`agent_friday.py` is still here as a legacy LiveKit-based mode, but you do not need it for the local stack.
 
 ---
 
@@ -35,12 +37,14 @@ It has three main pieces:
 ```text
 friday-operator-suite/
 |-- server.py            # MCP server entry point
-|-- agent_friday.py      # LiveKit voice agent entry point
+|-- agent_friday.py      # Legacy LiveKit voice agent entry point
+|-- local_friday.py      # Local on-device voice entry point
 |-- desktop-app/         # Electron control deck
 |-- friday/
 |   |-- config.py
 |   |-- prompts/
 |   |-- resources/
+|   |-- speech.py
 |   |-- tools/
 |   |   |-- browser.py
 |   |   |-- desktop.py
@@ -66,7 +70,7 @@ friday-operator-suite/
 
 - Python 3.11 or newer
 - `uv`
-- A LiveKit Cloud project
+- Ollama with `gemma4` pulled locally
 
 ### 2. Clone and install
 
@@ -82,7 +86,7 @@ uv sync
 Copy-Item .env.example .env
 ```
 
-Fill in the keys in `.env` before starting the app.
+The local mode works with the defaults in `.env.example`. You only need to edit it if you want different model names, cache paths, or the legacy LiveKit mode.
 
 ### 4. Run Friday
 
@@ -101,15 +105,25 @@ For the local desktop shell:
 You can also run the pieces separately:
 
 ```powershell
-friday
-friday_voice dev
+uv run python server.py
+uv run python local_friday.py
 ```
 
-Or use the text console instead of the LiveKit browser session:
+Or use the text console instead of the microphone:
 
 ```powershell
-friday_voice console --text
+uv run python local_friday.py console
 ```
+
+By default, the local voice session responds directly to speech. If you want wake-word gating back, set `FRIDAY_WAKE_WORD_MODE=1` before launching.
+
+Friday now supports a fully local speech stack through Whisper and Piper. If you keep the defaults, the first run may download the speech models once and then run locally after that. To force the local path, set `FRIDAY_SPEECH_PROVIDER=local`.
+
+The desktop shell and launch scripts now start the Python modules directly instead of the generated `friday.exe` / `friday_voice.exe` shims, which avoids the Windows file-lock issue you were seeing.
+
+To use a local Ollama model for Friday's reasoning, set `FRIDAY_LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1/`, and `OLLAMA_LLM_MODEL=gemma4`.
+
+If you still want the old browser-based LiveKit mode, you can keep the `LIVEKIT_*` variables and run `agent_friday.py` directly. That path is now legacy.
 
 ---
 
@@ -134,14 +148,31 @@ Keep it punchy, vertical, and save the final project locally.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `LIVEKIT_URL` | yes | Your LiveKit Cloud websocket URL |
-| `LIVEKIT_API_KEY` | yes | LiveKit API key |
-| `LIVEKIT_API_SECRET` | yes | LiveKit API secret |
-| `OPENAI_API_KEY` | yes | Used for the LLM, Whisper STT, and TTS |
+| `LIVEKIT_URL` | legacy | Your LiveKit Cloud websocket URL, only for the old LiveKit mode |
+| `LIVEKIT_API_KEY` | legacy | LiveKit API key for the old LiveKit mode |
+| `LIVEKIT_API_SECRET` | legacy | LiveKit API secret for the old LiveKit mode |
+| `OPENAI_API_KEY` | legacy | Only needed for the old cloud speech/LLM path |
+| `FRIDAY_SPEECH_PROVIDER` | no | `local` or `openai` |
+| `FRIDAY_STT_PROVIDER` | no | Overrides speech recognition only; defaults to `FRIDAY_SPEECH_PROVIDER` |
+| `FRIDAY_TTS_PROVIDER` | no | Overrides text-to-speech only; defaults to `FRIDAY_SPEECH_PROVIDER` |
+| `FRIDAY_LOCAL_STT_MODEL` | no | Whisper model name or local path, for example `base.en` |
+| `FRIDAY_LOCAL_STT_DEVICE` | no | Whisper device, usually `cpu` |
+| `FRIDAY_LOCAL_STT_COMPUTE_TYPE` | no | Whisper compute type, usually `int8` on CPU |
+| `FRIDAY_LOCAL_STT_LANGUAGE` | no | Whisper language hint, usually `en` |
+| `FRIDAY_LOCAL_STT_DOWNLOAD_ROOT` | no | Cache directory for Whisper models |
+| `FRIDAY_LOCAL_STT_OFFLINE` | no | Set to `1` to require local cached Whisper files only |
+| `FRIDAY_LOCAL_TTS_MODEL` | no | Piper voice preset or local `.onnx` file, for example `en_US-lessac-medium` |
+| `FRIDAY_LOCAL_TTS_CONFIG` | no | Optional Piper `.onnx.json` config path for a custom voice |
+| `FRIDAY_LOCAL_TTS_DOWNLOAD_DIR` | no | Cache directory for Piper voice downloads |
+| `FRIDAY_LOCAL_TTS_USE_CUDA` | no | Set to `1` to let Piper use CUDA if available |
+| `FRIDAY_LOCAL_TTS_VOLUME` | no | Piper volume multiplier, default `1.0` |
+| `FRIDAY_LLM_PROVIDER` | no | `openai` or `ollama` |
+| `OLLAMA_BASE_URL` | no | Ollama OpenAI-compatible endpoint, usually `http://127.0.0.1:11434/v1/` |
+| `OLLAMA_LLM_MODEL` | no | Ollama model name, for example `gemma4` |
 | `FRIDAY_SHORTS_OUTPUT_ROOT` | no | Default output folder for short-form video projects |
 | `SHORTS_MAKER_DIR` | no | Path to your local `shorts_maker` checkout |
 
-The current voice stack is OpenAI-only for speech and language, so the voice side only needs the LiveKit keys plus `OPENAI_API_KEY`.
+The voice side can now run fully local with Whisper and Piper. If you want to keep everything offline after the first model download, leave `FRIDAY_SPEECH_PROVIDER=local` enabled and set `FRIDAY_LOCAL_STT_OFFLINE=1` once the Whisper model is cached.
 
 ---
 
@@ -156,7 +187,7 @@ When a GUI is not needed, it should prefer file, shell, and workflow tools over 
 ## Tech Stack
 
 - FastMCP
-- LiveKit Agents
+- LiveKit Agents (legacy)
 - Playwright
 - Electron
 - Python 3.11+

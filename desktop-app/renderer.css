@@ -385,7 +385,7 @@ button:focus-visible {
   animation: pulseCore 4s ease-in-out infinite;
 }
 
-body[data-mode="playground"] .reactor-core {
+body[data-mode="local"] .reactor-core {
   box-shadow:
     0 0 0 14px rgba(31, 184, 255, 0.18),
     0 0 52px rgba(81, 242, 199, 0.28),
@@ -622,6 +622,12 @@ body.drawer-open .drawer {
     0 18px 36px rgba(0, 0, 0, 0.18);
 }
 
+.local-voice-shell {
+  min-height: 200px;
+  display: flex;
+  align-items: flex-start;
+}
+
 .voice-lab-shell::before {
   content: "";
   position: absolute;
@@ -630,17 +636,6 @@ body.drawer-open .drawer {
   border-radius: 18px 18px 14px 14px;
   background: linear-gradient(180deg, rgba(71, 221, 255, 0.06), transparent);
   pointer-events: none;
-}
-
-.voice-lab-view {
-  width: 100%;
-  display: block;
-  height: clamp(540px, 58vh, 760px);
-  min-height: 540px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 18px;
-  background: #02060f;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .voice-lab-footer {
@@ -739,6 +734,12 @@ h2 {
   display: grid;
   gap: 10px;
   justify-items: end;
+}
+
+.local-voice-stack {
+  width: 100%;
+  justify-items: start;
+  align-content: start;
 }
 
 .status-badge {
@@ -973,7 +974,7 @@ button.wide {
   word-break: break-word;
 }
 
-#livekitEndpoint {
+#runtimeSummary {
   width: fit-content;
   margin-top: 8px;
   padding: 6px 10px;
@@ -990,7 +991,7 @@ button.wide {
 
 body[data-mode="idle"] .status-badge[data-tone="idle"],
 body[data-mode="console"] .status-badge[data-tone="console"],
-body[data-mode="playground"] .status-badge[data-tone="open"] {
+body[data-mode="local"] .status-badge[data-tone="open"] {
   box-shadow:
     0 0 0 1px rgba(71, 221, 255, 0.05),
     0 14px 30px rgba(0, 0, 0, 0.1);
@@ -1153,13 +1154,12 @@ body[data-mode="playground"] .status-badge[data-tone="open"] {
     padding: 16px;
   }
 
-  .voice-lab-shell,
-  .voice-lab-view {
+  .voice-lab-shell {
     min-height: 320px;
   }
 
-  .voice-lab-view {
-    height: 320px;
+  .local-voice-shell {
+    min-height: 180px;
   }
 
   .drawer-card--voice .panel-head {

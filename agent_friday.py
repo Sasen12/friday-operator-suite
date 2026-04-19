@@ -8,8 +8,8 @@ running on the Windows host.
 MCP Server URL is auto-resolved from WSL → Windows host IP.
 
 Run:
-  friday_voice dev           – LiveKit Cloud / browser mode
-  friday_voice console --text  – text-only console mode
+  python agent_friday.py dev           – legacy LiveKit browser mode
+  python agent_friday.py console --text  – text-only console mode
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import sys
 import contextlib
 import re
 import time
+import uuid
 
 from dotenv import load_dotenv
 
@@ -54,34 +55,50 @@ _normalize_windows_portaudio_arch()
 try:
     from livekit.agents import JobContext, StopResponse, WorkerOptions, cli
     from livekit.agents.voice import Agent, AgentSession
+    from livekit.agents.stt import RecognitionUsage, SpeechData, SpeechEvent, SpeechEventType
     from livekit.agents.llm import mcp
 
     # Plugins
     from livekit.plugins import openai as lk_openai, silero
+    from friday.speech import (
+        LocalAudioFrame,
+        build_local_speech_config,
+        synthesize_text_frames,
+        transcribe_audio_frames,
+    )
     _LIVEKIT_IMPORT_ERROR = None
 except ImportError as exc:
     JobContext = WorkerOptions = cli = None
     StopResponse = None
     Agent = AgentSession = None
+    RecognitionUsage = SpeechData = SpeechEvent = SpeechEventType = None
     mcp = None
     lk_openai = silero = None
+    LocalAudioFrame = build_local_speech_config = synthesize_text_frames = transcribe_audio_frames = None
     _LIVEKIT_IMPORT_ERROR = exc
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
 
-STT_PROVIDER       = "whisper"
-TTS_PROVIDER       = "openai"
+SPEECH_PROVIDER    = os.getenv("FRIDAY_SPEECH_PROVIDER", "local").strip().lower()
+STT_PROVIDER       = os.getenv("FRIDAY_STT_PROVIDER", SPEECH_PROVIDER).strip().lower()
+TTS_PROVIDER       = os.getenv("FRIDAY_TTS_PROVIDER", SPEECH_PROVIDER).strip().lower()
+
+LLM_PROVIDER       = os.getenv("FRIDAY_LLM_PROVIDER", "openai").strip().lower()
 
 OPENAI_LLM_MODEL   = "gpt-4o"
+OLLAMA_BASE_URL    = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1/")
+OLLAMA_LLM_MODEL   = os.getenv("OLLAMA_LLM_MODEL", "gemma4")
 
 OPENAI_TTS_MODEL   = "tts-1"
 OPENAI_TTS_VOICE   = "nova"       # "nova" has a clean, confident female tone
+OPENAI_STT_MODEL   = "whisper-1"
+LOCAL_STT_MODEL    = os.getenv("FRIDAY_LOCAL_STT_MODEL", "base.en")
+LOCAL_TTS_MODEL    = os.getenv("FRIDAY_LOCAL_TTS_MODEL", "en_US-lessac-medium")
 TTS_SPEED           = 1.15
-
-SARVAM_TTS_LANGUAGE = "en-IN"
-SARVAM_TTS_SPEAKER  = "rahul"
 
 # MCP server running on Windows host
 MCP_SERVER_PORT = 8000
@@ -109,6 +126,7 @@ Treat the laptop as your workspace. If the user wants something done on the mach
 - For text entry and file edits, use `set_window_text`, `type_text`, `read_file`, `write_file`, or the app-specific workflows instead of manual typing when possible.
 - If a request can be completed without the GUI, prefer the system tools over clicks.
 - Use `press_hotkey` with `win` combos, `open_system_surface` for shell targets, and `window_state` for maximize, minimize, restore, snap, topmost, and close workflows.
+- Use `set_display_brightness` and `get_display_brightness` for laptop screen brightness instead of trying to drag the Settings slider.
 - Use `search_start_menu` when you want to launch something through Windows search.
 - Use `wait_for_window` when you need to wait for an app to appear.
 - Use `run_desktop_actions` to chain multi-step GUI routines, `run_system_actions` to chain file, shell, or process routines, `run_workflow_actions` to chain Obsidian, Firefox, and File Explorer routines, and `run_macro` to replay saved automation recipes.
@@ -152,6 +170,7 @@ Use the system tools when the task involves files, folders, scripts, installs, c
 - Use `list_processes` and `kill_process` when the user wants to inspect or stop running programs.
 - Prefer direct file and shell tools over clicking when the task does not require a visible window.
 - Use `search_file_contents` to locate text inside files, `replace_in_file` to update specific text without rewriting whole files, and `reveal_path`, `start_process`, or `search_processes` when that is the shortest path to the result.
+- Use `set_display_brightness` when the user wants the screen dimmed or brightened.
 - Use `confirm=True` for destructive changes, overwriting existing files, or force-closing processes.
 - If a task can be done with a file write, shell command, or process action, do that instead of asking the user to drive the computer.
 - Ask before destructive actions like deleting data, force-closing processes, or running commands that change the system.
@@ -172,6 +191,8 @@ Use the app workflow tools for the most common apps the user relies on.
 - Use Firefox tools when the user wants Firefox itself, especially for opening URLs or searching the web in that app.
 - Use File Explorer tools to open folders, reveal files, and search the filesystem.
 - Use `run_workflow_actions` when the task spans multiple note, browser, or file-explorer steps, and use saved macros when the same routine will come up again.
+- If the user gives you a vault path, file path, or folder path, pass it through verbatim instead of guessing a default location.
+- When a workflow writes directly to disk or opens through a URI, report the saved path and any focused window the tool returned; do not claim the app visibly changed unless the tool result confirms it.
 - Prefer these workflows over raw mouse clicks when the target app is known.
 - Use these workflows first for routine tasks like notes, browsing, and file navigation, then fall back to generic desktop control only when the workflow cannot complete the job.
 
@@ -319,7 +340,7 @@ def _wake_word_mode_enabled() -> bool:
     raw = os.getenv("FRIDAY_WAKE_WORD_MODE")
     if raw is not None and raw.strip():
         return raw.strip().lower() in {"1", "true", "yes", "on"}
-    return "console" not in {arg.lower() for arg in sys.argv[1:]}
+    return False
 
 
 def _wake_word_window_seconds() -> float:
@@ -372,8 +393,6 @@ def _is_sleep_phrase(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
-
-load_dotenv()
 
 logger = logging.getLogger("friday-agent")
 logger.setLevel(logging.INFO)
@@ -437,48 +456,35 @@ def _mcp_server_url() -> str:
 # ---------------------------------------------------------------------------
 
 def _build_stt():
-    if STT_PROVIDER == "sarvam":
-        if not os.getenv("SARVAM_API_KEY", "").strip():
-            logger.warning("SARVAM_API_KEY is not set; falling back to OpenAI Whisper.")
-            return lk_openai.STT(model="whisper-1")
-        try:
-            logger.info("STT → Sarvam Saaras v3")
-            return sarvam.STT(
-                language="unknown",
-                model="saaras:v3",
-                mode="transcribe",
-                flush_signal=True,
-                sample_rate=16000,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Sarvam STT is unavailable (%s); falling back to OpenAI Whisper.",
-                exc,
-            )
-            return lk_openai.STT(model="whisper-1")
-    elif STT_PROVIDER == "whisper":
-        logger.info("STT → OpenAI Whisper")
-        return lk_openai.STT(model="whisper-1")
+    if STT_PROVIDER == "local":
+        logger.info("STT -> local Faster Whisper (%s)", LOCAL_STT_MODEL)
+        return None
+    if STT_PROVIDER == "openai":
+        logger.info("STT -> OpenAI Whisper (%s)", OPENAI_STT_MODEL)
+        return lk_openai.STT(model=OPENAI_STT_MODEL)
     else:
         raise ValueError(f"Unknown STT_PROVIDER: {STT_PROVIDER!r}")
 
 
 def _build_llm():
+    if LLM_PROVIDER == "ollama":
+        logger.info("LLM -> Ollama (%s @ %s)", OLLAMA_LLM_MODEL, OLLAMA_BASE_URL)
+        return lk_openai.LLM(
+            model=OLLAMA_LLM_MODEL,
+            base_url=OLLAMA_BASE_URL,
+            api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+        )
+
     logger.info("LLM -> OpenAI (%s)", OPENAI_LLM_MODEL)
     return lk_openai.LLM(model=OPENAI_LLM_MODEL)
 
 
 def _build_tts():
-    if TTS_PROVIDER == "sarvam":
-        logger.info("TTS → Sarvam Bulbul v3")
-        return sarvam.TTS(
-            target_language_code=SARVAM_TTS_LANGUAGE,
-            model="bulbul:v3",
-            speaker=SARVAM_TTS_SPEAKER,
-            pace=TTS_SPEED,
-        )
-    elif TTS_PROVIDER == "openai":
-        logger.info("TTS → OpenAI TTS (%s / %s)", OPENAI_TTS_MODEL, OPENAI_TTS_VOICE)
+    if TTS_PROVIDER == "local":
+        logger.info("TTS -> local Piper (%s)", LOCAL_TTS_MODEL)
+        return None
+    if TTS_PROVIDER == "openai":
+        logger.info("TTS -> OpenAI TTS (%s / %s)", OPENAI_TTS_MODEL, OPENAI_TTS_VOICE)
         return lk_openai.TTS(model=OPENAI_TTS_MODEL, voice=OPENAI_TTS_VOICE, speed=TTS_SPEED)
     else:
         raise ValueError(f"Unknown TTS_PROVIDER: {TTS_PROVIDER!r}")
@@ -496,10 +502,22 @@ if _LIVEKIT_IMPORT_ERROR is None:
         All tools are provided via the MCP server on the Windows host.
         """
 
-        def __init__(self, stt, llm, tts, wake_word_mode: bool = False) -> None:
+        def __init__(
+            self,
+            stt,
+            llm,
+            tts,
+            wake_word_mode: bool = False,
+            stt_provider: str = "openai",
+            tts_provider: str = "openai",
+            local_speech=None,
+        ) -> None:
             self._wake_word_mode = wake_word_mode
             self._wake_active_until = 0.0
             self._wake_window_seconds = _wake_word_window_seconds()
+            self._stt_provider = stt_provider
+            self._tts_provider = tts_provider
+            self._local_speech = local_speech
             super().__init__(
                 instructions=_agent_instructions(wake_word_mode),
                 stt=stt,
@@ -514,6 +532,90 @@ if _LIVEKIT_IMPORT_ERROR is None:
                     ),
                 ],
             )
+
+        async def stt_node(self, audio, model_settings):
+            if self._stt_provider != "local":
+                async for event in Agent.default.stt_node(self, audio, model_settings):
+                    yield event
+                return
+
+            if self._local_speech is None:
+                raise RuntimeError("local speech is enabled but no speech config is loaded")
+
+            request_id = ""
+            frames = []
+            started = False
+
+            async for frame in audio:
+                frames.append(frame)
+                if not started:
+                    started = True
+                    request_id = uuid.uuid4().hex
+                    yield SpeechEvent(
+                        type=SpeechEventType.START_OF_SPEECH,
+                        request_id=request_id,
+                    )
+
+            if not frames:
+                return
+
+            transcript, duration, language = await transcribe_audio_frames(
+                frames,
+                self._local_speech,
+            )
+
+            if transcript:
+                request_id = request_id or uuid.uuid4().hex
+                yield SpeechEvent(
+                    type=SpeechEventType.FINAL_TRANSCRIPT,
+                    request_id=request_id,
+                    alternatives=[
+                        SpeechData(
+                            language=language,
+                            text=transcript,
+                            start_time=0.0,
+                            end_time=duration,
+                            confidence=1.0,
+                        )
+                    ],
+                    recognition_usage=RecognitionUsage(audio_duration=duration),
+                )
+
+            if request_id:
+                yield SpeechEvent(
+                    type=SpeechEventType.END_OF_SPEECH,
+                    request_id=request_id,
+                )
+
+        async def tts_node(self, text, model_settings):
+            if self._tts_provider != "local":
+                async for frame in Agent.default.tts_node(self, text, model_settings):
+                    yield frame
+                return
+
+            if self._local_speech is None:
+                raise RuntimeError("local speech is enabled but no speech config is loaded")
+
+            chunks = []
+            async for chunk in text:
+                if chunk:
+                    chunks.append(chunk)
+
+            utterance = "".join(chunks).strip()
+            if not utterance:
+                return
+
+            frames = await synthesize_text_frames(utterance, self._local_speech)
+            for frame in frames:
+                if isinstance(frame, LocalAudioFrame):
+                    yield rtc.AudioFrame(
+                        data=frame.data,
+                        sample_rate=frame.sample_rate,
+                        num_channels=frame.num_channels,
+                        samples_per_channel=frame.samples_per_channel,
+                    )
+                else:
+                    yield frame
 
         async def on_enter(self) -> None:
             """Greet the user specifically for the late-night lab session."""
@@ -560,23 +662,32 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# LiveKit entry point
+# Legacy LiveKit entry point
 # ---------------------------------------------------------------------------
 
 def _turn_detection() -> str:
-    return "stt" if STT_PROVIDER == "sarvam" else "vad"
+    return "vad"
 
 
 def _endpointing_delay() -> float:
-    return {"sarvam": 0.07, "whisper": 0.3}.get(STT_PROVIDER, 0.1)
+    return 0.35 if STT_PROVIDER == "local" else 0.3
 
 
 async def entrypoint(ctx: JobContext) -> None:
     _require_livekit()
     wake_word_mode = _wake_word_mode_enabled()
+    local_speech = (
+        build_local_speech_config(tts_speed=TTS_SPEED)
+        if STT_PROVIDER == "local" or TTS_PROVIDER == "local"
+        else None
+    )
     logger.info(
-        "FRIDAY online – room: %s | STT=%s | LLM=openai | TTS=%s | wake_word=%s",
-        ctx.room.name, STT_PROVIDER, TTS_PROVIDER, wake_word_mode,
+        "FRIDAY online – room: %s | STT=%s | LLM=%s | TTS=%s | wake_word=%s",
+        ctx.room.name,
+        STT_PROVIDER if STT_PROVIDER != "local" else f"local({LOCAL_STT_MODEL})",
+        LLM_PROVIDER,
+        TTS_PROVIDER if TTS_PROVIDER != "local" else f"local({LOCAL_TTS_MODEL})",
+        wake_word_mode,
     )
 
     stt = _build_stt()
@@ -589,7 +700,15 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     await session.start(
-        agent=FridayAgent(stt=stt, llm=llm, tts=tts, wake_word_mode=wake_word_mode),
+        agent=FridayAgent(
+            stt=stt,
+            llm=llm,
+            tts=tts,
+            wake_word_mode=wake_word_mode,
+            stt_provider=STT_PROVIDER,
+            tts_provider=TTS_PROVIDER,
+            local_speech=local_speech,
+        ),
         room=ctx.room,
     )
 
@@ -610,5 +729,19 @@ def dev():
         sys.argv.append("dev")
     main()
 
-if __name__ == "__main__":
+
+def _script_main() -> None:
+    """Route direct script execution to the right LiveKit mode."""
+    args = [arg.strip().lower() for arg in sys.argv[1:] if arg.strip()]
+    if not args:
+        dev()
+        return
+
+    if args[0] == "console" and "--text" not in args:
+        sys.argv.append("--text")
+
     main()
+
+
+if __name__ == "__main__":
+    _script_main()

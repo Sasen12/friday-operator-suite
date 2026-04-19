@@ -173,6 +173,96 @@ def _reveal_path(path: pathlib.Path) -> None:
     _open_path(path)
 
 
+def _display_brightness_snapshot(timeout_seconds: int = 20) -> dict[str, Any]:
+    script = """
+$ErrorActionPreference = 'Stop'
+$controllers = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop)
+$current = $null
+try {
+    $current = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1 CurrentBrightness, InstanceName
+} catch {
+    $current = $null
+}
+[pscustomobject]@{
+    controller_count = $controllers.Count
+    current_brightness = if ($null -ne $current) { $current.CurrentBrightness } else { $null }
+    instance_name = if ($null -ne $current) { $current.InstanceName } else { $null }
+} | ConvertTo-Json -Depth 4
+"""
+    result = _run_powershell(script, timeout_seconds=timeout_seconds)
+    records = _json_records(result.stdout)
+    payload: dict[str, Any]
+    if records:
+        payload = dict(records[0])
+    else:
+        payload = {
+            "raw_stdout": result.stdout.strip(),
+            "raw_stderr": result.stderr.strip(),
+        }
+    payload.update(
+        {
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    )
+    return payload
+
+
+def _set_display_brightness(level: int, transition_seconds: int = 1, timeout_seconds: int = 20) -> dict[str, Any]:
+    target = max(0, min(100, int(level)))
+    transition = max(0, int(transition_seconds))
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$target = [uint32]{target}
+$transition = [uint32]{transition}
+$controllers = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop)
+if ($controllers.Count -eq 0) {{
+    throw 'No display brightness controller was found.'
+}}
+foreach ($controller in $controllers) {{
+    try {{
+        Invoke-CimMethod -InputObject $controller -MethodName WmiSetBrightness -Arguments @{{ Timeout = $transition; Brightness = $target }} | Out-Null
+    }} catch {{
+        Invoke-WmiMethod -Namespace root/WMI -Class WmiMonitorBrightnessMethods -Name WmiSetBrightness -ArgumentList $transition, $target | Out-Null
+    }}
+}}
+$current = $null
+try {{
+    $current = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1 CurrentBrightness, InstanceName
+}} catch {{
+    $current = $null
+}}
+[pscustomobject]@{{
+    target_brightness = $target
+    transition_seconds = $transition
+    controller_count = $controllers.Count
+    current_brightness = if ($null -ne $current) {{ $current.CurrentBrightness }} else {{ $null }}
+    instance_name = if ($null -ne $current) {{ $current.InstanceName }} else {{ $null }}
+}} | ConvertTo-Json -Depth 4
+"""
+    result = _run_powershell(script, timeout_seconds=timeout_seconds)
+    records = _json_records(result.stdout)
+    payload: dict[str, Any]
+    if records:
+        payload = dict(records[0])
+    else:
+        payload = {
+            "target_brightness": target,
+            "transition_seconds": transition,
+            "raw_stdout": result.stdout.strip(),
+            "raw_stderr": result.stderr.strip(),
+        }
+    payload.update(
+        {
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    )
+    return payload
+
+
 def _copy_path(source: pathlib.Path, destination: pathlib.Path, overwrite: bool = False) -> None:
     if destination.exists():
         if not overwrite:
@@ -738,6 +828,16 @@ def register(mcp):
         return {"revealed": str(target)}
 
     @mcp.tool()
+    def get_display_brightness() -> dict[str, Any]:
+        """Read the current built-in display brightness, if the hardware exposes it."""
+        return _display_brightness_snapshot()
+
+    @mcp.tool()
+    def set_display_brightness(level: int = 0, transition_seconds: int = 1) -> dict[str, Any]:
+        """Set the built-in display brightness from 0 to 100."""
+        return _set_display_brightness(level=level, transition_seconds=transition_seconds)
+
+    @mcp.tool()
     def start_process(
         command: str,
         arguments: str = "",
@@ -807,7 +907,7 @@ def register(mcp):
         steps: list[dict[str, Any]],
         stop_on_error: bool = True,
     ) -> list[dict[str, Any]]:
-        """Execute a chain of file, shell, and process actions in order."""
+        """Execute a chain of file, shell, process, and display-brightness actions in order."""
         if not isinstance(steps, list):
             raise TypeError("steps must be a list of action objects")
 
@@ -980,6 +1080,13 @@ def register(mcp):
                     outcome = open_path(path=str(_pick(step, "path", "target", default="")).strip())
                 elif action == "reveal_path":
                     outcome = reveal_path(path=str(_pick(step, "path", "target", default="")).strip())
+                elif action == "get_display_brightness":
+                    outcome = get_display_brightness()
+                elif action == "set_display_brightness":
+                    outcome = set_display_brightness(
+                        level=_as_int(_pick(step, "level", "brightness", "value", default=0), 0),
+                        transition_seconds=_as_int(_pick(step, "transition_seconds", "timeout", default=1), 1),
+                    )
                 elif action == "start_process":
                     outcome = start_process(
                         command=str(_pick(step, "command", "path", "target", default="")).strip(),

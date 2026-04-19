@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -8,9 +8,10 @@ const readline = require('readline');
 const repoRoot = path.resolve(__dirname, '..');
 const runScript = path.join(repoRoot, 'run-friday.ps1');
 const serverPort = 8000;
-const voiceLabUrl = 'https://agents-playground.livekit.io/#cam=1&mic=1&screen=1&video=1&audio=1&chat=1';
-// Keep the playground session fresh so it does not remember a signed-in dashboard state.
-const voiceLabPartition = 'friday-voice-lab';
+// Launch the Python modules directly so Windows does not contend with uv-generated console-script shims.
+const serverLauncherArgs = ['run', 'python', 'server.py'];
+const voiceConsoleLauncherArgs = ['run', 'python', 'local_friday.py', 'console'];
+const voicePlaygroundLauncherArgs = ['run', 'python', 'local_friday.py'];
 
 function readEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -51,35 +52,22 @@ const repoEnv = {
   ...readEnvFile(path.join(repoRoot, '.env.local')),
 };
 
-function getLiveKitUrl() {
-  return process.env.LIVEKIT_URL || repoEnv.LIVEKIT_URL || '';
-}
-
-function formatLiveKitHostname(value) {
-  const text = String(value || '').trim();
-  if (!text) {
-    return '';
-  }
-
-  try {
-    return new URL(text).hostname;
-  } catch {
-    return text.replace(/^(wss?|https?):\/\//i, '').replace(/\/.*$/, '');
-  }
-}
-
 let mainWindow = null;
-let voiceLabWindow = null;
 let serverProcess = null;
 let voiceProcess = null;
-let browserLauncherProcess = null;
 let autoStartQueued = false;
 let state = {
   mode: 'idle',
   server: 'stopped',
   voice: 'stopped',
   voiceLab: 'closed',
-  livekitUrl: getLiveKitUrl(),
+  runtime: {
+    speech: 'local',
+    sttModel: process.env.FRIDAY_LOCAL_STT_MODEL || repoEnv.FRIDAY_LOCAL_STT_MODEL || 'base.en',
+    ttsModel: process.env.FRIDAY_LOCAL_TTS_MODEL || repoEnv.FRIDAY_LOCAL_TTS_MODEL || 'en_US-lessac-medium',
+    llmProvider: process.env.FRIDAY_LLM_PROVIDER || repoEnv.FRIDAY_LLM_PROVIDER || 'ollama',
+    llmModel: process.env.OLLAMA_LLM_MODEL || repoEnv.OLLAMA_LLM_MODEL || 'gemma4',
+  },
   pythonPath: '',
   syncing: false,
 };
@@ -157,31 +145,6 @@ function classifyVoiceActivity(line) {
 function setState(patch) {
   state = { ...state, ...patch };
   sendState();
-}
-
-function isLiveKitOrigin(value) {
-  const origin = String(value || '').toLowerCase();
-  return origin.includes('agents-playground.livekit.io') || origin.includes('livekit.io');
-}
-
-function configurePermissions() {
-  const configureSession = (targetSession) => {
-    targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-      const origin = details?.securityOrigin || webContents.getURL();
-      const allowed = isLiveKitOrigin(origin) && ['media', 'camera', 'microphone', 'display-capture'].includes(permission);
-      callback(Boolean(allowed));
-    });
-
-    if (typeof targetSession.setPermissionCheckHandler === 'function') {
-      targetSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-        const origin = requestingOrigin || webContents.getURL();
-        return Boolean(isLiveKitOrigin(origin) && ['media', 'camera', 'microphone', 'display-capture'].includes(permission));
-      });
-    }
-  };
-
-  configureSession(session.defaultSession);
-  configureSession(session.fromPartition(voiceLabPartition));
 }
 
 function isWindowsAmd64Python(pythonPath) {
@@ -265,46 +228,6 @@ function waitForPort(port, timeoutMs = 60_000) {
   });
 }
 
-function createVoiceLabWindow() {
-  if (voiceLabWindow && !voiceLabWindow.isDestroyed()) {
-    voiceLabWindow.focus();
-    return voiceLabWindow;
-  }
-
-  voiceLabWindow = new BrowserWindow({
-    width: 1500,
-    height: 980,
-    minWidth: 1180,
-    minHeight: 800,
-    backgroundColor: '#02060f',
-    title: 'FRIDAY Voice Lab',
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: voiceLabPartition,
-    },
-  });
-
-  voiceLabWindow.removeMenu();
-  voiceLabWindow.loadURL(voiceLabUrl);
-  voiceLabWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  voiceLabWindow.on('closed', () => {
-    voiceLabWindow = null;
-    setState({ voiceLab: 'closed' });
-  });
-  voiceLabWindow.webContents.on('did-finish-load', () => {
-    setState({ voiceLab: 'open' });
-    sendLog('voice-lab', 'LiveKit playground window is ready.', 'info');
-  });
-
-  return voiceLabWindow;
-}
-
 function spawnUv(args, label, extraEnv = {}) {
   const pythonPath = state.pythonPath || findX64PythonPath();
   if (!pythonPath) {
@@ -349,7 +272,7 @@ function spawnUv(args, label, extraEnv = {}) {
     }
     if (label === 'voice') {
       voiceProcess = null;
-      setState({ voice: 'stopped' });
+      setState({ voice: 'stopped', voiceLab: 'closed' });
     }
   });
 
@@ -372,7 +295,7 @@ async function startConsoleDeck() {
   sendState();
 
   try {
-    serverProcess = spawnUv(['run', 'friday'], 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
+    serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
     setState({ server: 'starting' });
     sendLog('launcher', `Using Python: ${pythonPath}`);
     sendLog('launcher', 'Starting FRIDAY server...');
@@ -380,7 +303,7 @@ async function startConsoleDeck() {
     setState({ server: 'online' });
     sendLog('launcher', 'Starting FRIDAY voice console...');
 
-    voiceProcess = spawnUv(['run', 'friday_voice', 'console', '--text'], 'voice', { FRIDAY_WAKE_WORD_MODE: '0' });
+    voiceProcess = spawnUv(voiceConsoleLauncherArgs, 'voice', { FRIDAY_WAKE_WORD_MODE: '0' });
     setState({ voice: 'starting' });
   } catch (error) {
     sendLog('launcher', error.message, 'error');
@@ -391,7 +314,7 @@ async function startConsoleDeck() {
 
 async function startPlayground() {
   await stopAll({ quiet: true });
-  setState({ mode: 'playground', syncing: false, voiceLab: 'opening' });
+  setState({ mode: 'local', syncing: false, voiceLab: 'opening' });
 
   try {
     const pythonPath = findX64PythonPath();
@@ -402,16 +325,16 @@ async function startPlayground() {
     sendState();
     sendLog('launcher', `Using Python: ${pythonPath}`);
 
-    serverProcess = spawnUv(['run', 'friday'], 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
+    serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
     setState({ server: 'starting' });
-    sendLog('launcher', 'Starting FRIDAY server for Voice Lab...');
+    sendLog('launcher', 'Starting FRIDAY server for local voice...');
     await waitForPort(serverPort, 60_000);
     setState({ server: 'online' });
-    sendLog('launcher', 'Starting FRIDAY voice agent for Voice Lab...');
+    sendLog('launcher', 'Starting FRIDAY local voice runtime...');
 
-    voiceProcess = spawnUv(['run', 'friday_voice', 'dev'], 'voice', { FRIDAY_WAKE_WORD_MODE: '1' });
+    voiceProcess = spawnUv(voicePlaygroundLauncherArgs, 'voice', { FRIDAY_WAKE_WORD_MODE: '1' });
     setState({ voice: 'starting', voiceLab: 'open' });
-    sendLog('voice-lab', 'Embedded LiveKit playground is ready inside the desktop app.', 'info');
+    sendLog('voice', 'Local voice runtime is ready inside the desktop app.', 'info');
   } catch (error) {
     sendLog('launcher', error.message, 'error');
     await stopAll({ quiet: true });
@@ -424,7 +347,6 @@ async function stopAll(options = {}) {
   const processes = [
     ['voice', voiceProcess],
     ['server', serverProcess],
-    ['playground', browserLauncherProcess],
   ];
 
   for (const [label, child] of processes) {
@@ -451,13 +373,6 @@ async function stopAll(options = {}) {
 
   serverProcess = null;
   voiceProcess = null;
-  browserLauncherProcess = null;
-  if (voiceLabWindow && !voiceLabWindow.isDestroyed()) {
-    try {
-      voiceLabWindow.close();
-    } catch {}
-  }
-  voiceLabWindow = null;
   setState({ mode: 'idle', server: 'stopped', voice: 'stopped', voiceLab: 'closed' });
 }
 
@@ -485,7 +400,6 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
@@ -493,19 +407,6 @@ function createWindow() {
   mainWindow.removeMenu();
   mainWindow.webContents.on('did-finish-load', () => {
     sendState();
-  });
-  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    const src = String(params.src || '').toLowerCase();
-    if (!src.includes('agents-playground.livekit.io') && !src.includes('livekit.io')) {
-      event.preventDefault();
-      return;
-    }
-
-    webPreferences.contextIsolation = true;
-    webPreferences.nodeIntegration = false;
-    webPreferences.sandbox = true;
-    delete webPreferences.preload;
-    webPreferences.partition = voiceLabPartition;
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer.html'));
   mainWindow.once('ready-to-show', () => {
@@ -570,7 +471,6 @@ function queueAutoStart() {
 }
 
 app.whenReady().then(() => {
-  configurePermissions();
   createWindow();
   queueAutoStart();
 

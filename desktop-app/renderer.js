@@ -3,7 +3,6 @@ const state = {
   server: 'stopped',
   voice: 'stopped',
   voiceLab: 'closed',
-  livekitUrl: '',
   pythonPath: '',
   drawerOpen: false,
   drawerAutoOpened: false,
@@ -24,8 +23,7 @@ const elements = {
   serverBadge: document.getElementById('serverBadge'),
   voiceBadge: document.getElementById('voiceBadge'),
   voiceLabBadge: document.getElementById('voiceLabBadge'),
-  livekitEndpoint: document.getElementById('livekitEndpoint'),
-  voiceLabView: document.getElementById('voiceLabView'),
+  runtimeSummary: document.getElementById('runtimeSummary'),
   voiceLabStatus: document.getElementById('voiceLabStatus'),
   chromeStatus: document.getElementById('chromeStatus'),
   clockTime: document.getElementById('clockTime'),
@@ -59,19 +57,6 @@ function shortRuntimeLabel(pythonPath) {
   }
   const tail = pythonPath.split(/[\\/]/).pop() || 'python.exe';
   return `${tail} - x64`;
-}
-
-function shortLiveKitLabel(value) {
-  const text = String(value || '').trim();
-  if (!text) {
-    return '';
-  }
-
-  try {
-    return new URL(text).hostname;
-  } catch {
-    return text.replace(/^(wss?|https?):\/\//i, '').replace(/\/.*$/, '');
-  }
 }
 
 function updateClock() {
@@ -118,55 +103,6 @@ function toggleDrawer() {
 function setVoiceLabStatus(text) {
   if (elements.voiceLabStatus) {
     elements.voiceLabStatus.textContent = text;
-  }
-}
-
-function updateVoiceLabViewStatus(kind) {
-  if (kind === 'loading') {
-    setVoiceLabStatus('Connecting the LiveKit Cloud session...');
-  } else if (kind === 'ready') {
-    setVoiceLabStatus('LiveKit Cloud is ready inside this window.');
-  } else if (kind === 'closed') {
-    setVoiceLabStatus('Voice Lab is closed.');
-  } else if (kind === 'error') {
-    setVoiceLabStatus('Voice Lab needs a reconnect.');
-  }
-}
-
-async function preferCloudVoiceLabTab() {
-  const view = elements.voiceLabView;
-  if (!view) {
-    return;
-  }
-
-  try {
-    await view.executeJavaScript(
-      `(
-        async () => {
-          const findCloudTab = () => {
-            const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'));
-            return candidates.find((element) => {
-              const label = String(element.textContent || element.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-              return label === 'LiveKit Cloud' || label.startsWith('LiveKit Cloud ');
-            }) || null;
-          };
-
-          for (let attempt = 0; attempt < 20; attempt += 1) {
-            const cloudTab = findCloudTab();
-            if (cloudTab) {
-              cloudTab.click();
-              return true;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 150));
-          }
-
-          return false;
-        }
-      )()`,
-      true
-    );
-  } catch {
-    // If the page is already on the cloud flow or still hydrating, we leave it alone.
   }
 }
 
@@ -291,33 +227,21 @@ function renderState(next) {
   document.body.dataset.voice = state.voice;
   document.body.dataset.voiceLab = state.voiceLab;
 
-  setBadge(elements.modeBadge, `Mode: ${state.mode}`, state.mode);
+  setBadge(elements.modeBadge, `Mode: ${state.mode}`, state.mode === 'local' ? 'open' : state.mode);
   setBadge(elements.serverBadge, `Server: ${state.server}`, state.server);
   setBadge(elements.voiceBadge, `Voice: ${state.voice}`, state.voice);
-  setBadge(elements.voiceLabBadge, `Lab: ${state.voiceLab}`, state.voiceLab);
+  setBadge(elements.voiceLabBadge, `Session: ${state.voiceLab}`, state.voiceLab);
   if (elements.chromeStatus) {
     const chromeStatusLabel =
       state.mode === 'console'
         ? 'Console'
-        : state.mode === 'playground'
-          ? 'Cloud'
+        : state.mode === 'local'
+          ? 'Local'
           : state.server === 'online'
             ? 'Ready'
             : 'Standby';
     elements.chromeStatus.textContent = chromeStatusLabel;
     elements.chromeStatus.dataset.tone = chromeStatusLabel === 'Standby' ? 'idle' : 'online';
-  }
-
-  if (elements.voiceLabView) {
-    const voiceLabStatusKind =
-      state.voiceLab === 'open'
-        ? 'ready'
-        : state.voiceLab === 'opening'
-          ? 'loading'
-          : state.voiceLab === 'closed'
-            ? 'closed'
-            : 'error';
-    updateVoiceLabViewStatus(voiceLabStatusKind);
   }
 
   if (elements.pythonPath) {
@@ -326,11 +250,27 @@ function renderState(next) {
       : 'Python: waiting...';
   }
 
-  if (elements.livekitEndpoint) {
-    if (state.livekitUrl) {
-      const cloudLabel = shortLiveKitLabel(state.livekitUrl);
-      elements.livekitEndpoint.textContent = cloudLabel ? `Cloud: ${cloudLabel}` : 'Cloud: not configured';
-    }
+  if (elements.runtimeSummary) {
+    const runtime = state.runtime || {};
+    const speech = runtime.speech === 'local' ? `local Whisper (${runtime.sttModel || 'base.en'})` : 'local speech';
+    const tts = runtime.speech === 'local' ? `local Piper (${runtime.ttsModel || 'en_US-lessac-medium'})` : 'local TTS';
+    const reasoning =
+      runtime.llmProvider === 'ollama'
+        ? `Ollama ${runtime.llmModel || 'gemma4'}`
+        : runtime.llmProvider
+          ? `${runtime.llmProvider}`
+          : 'local reasoning';
+    elements.runtimeSummary.textContent = `Speech: ${speech} | TTS: ${tts} | Reasoning: ${reasoning}`;
+  }
+
+  if (elements.voiceLabStatus) {
+    const localStatus =
+      state.voiceLab === 'open'
+        ? 'Local voice is ready and listening on this machine.'
+        : state.voiceLab === 'opening'
+          ? 'Local voice is starting up.'
+          : 'Local voice is closed.';
+    setVoiceLabStatus(localStatus);
   }
 
   const consoleActive = state.mode === 'console' && state.voice !== 'stopped';
@@ -511,29 +451,6 @@ elements.closeWindow?.addEventListener('click', () => {
   window.fridayDeck.closeWindow();
 });
 
-elements.voiceLabView?.addEventListener('dom-ready', () => {
-  updateVoiceLabViewStatus('ready');
-  appendLog({
-    source: 'voice-lab',
-    message: 'LiveKit Cloud session is embedded in the desktop app.',
-    timestamp: new Date().toISOString(),
-  });
-  preferCloudVoiceLabTab().catch(() => {});
-});
-
-elements.voiceLabView?.addEventListener('did-start-loading', () => {
-  updateVoiceLabViewStatus('loading');
-});
-
-elements.voiceLabView?.addEventListener('did-fail-load', () => {
-  updateVoiceLabViewStatus('error');
-  appendLog({
-    source: 'voice-lab',
-    message: 'The embedded LiveKit page failed to load.',
-    timestamp: new Date().toISOString(),
-  });
-});
-
 elements.inputForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   sendInput(elements.commandInput.value).catch((error) =>
@@ -583,6 +500,6 @@ updateClock();
 setInterval(updateClock, 1000);
 appendLog({
   source: 'launcher',
-  message: 'F.R.I.D.A.Y is booting automatically. The voice session is embedded in this window.',
+  message: 'F.R.I.D.A.Y is booting automatically. The voice stack now runs locally on this machine.',
   timestamp: new Date().toISOString(),
 });

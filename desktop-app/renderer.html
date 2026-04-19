@@ -85,7 +85,7 @@
                 <span id="modeBadge" class="status-badge">Mode: idle</span>
                 <span id="serverBadge" class="status-badge">Server: stopped</span>
                 <span id="voiceBadge" class="status-badge">Voice: stopped</span>
-                <span id="voiceLabBadge" class="status-badge">Lab: closed</span>
+                <span id="voiceLabBadge" class="status-badge">Session: closed</span>
               </div>
             </div>
 
@@ -135,24 +135,21 @@
               <div class="panel-head">
                 <div>
                   <p class="kicker">Voice Lab</p>
-                  <h2>Cloud Session</h2>
-                  <p class="mono" id="livekitEndpoint">Cloud: loading...</p>
+                  <h2>Local Session</h2>
+                  <p class="mono" id="runtimeSummary">Speech: local Whisper | TTS: local Piper | Reasoning: Ollama gemma4</p>
                 </div>
-                <p class="subtle" id="voiceLabStatus">LiveKit Cloud session embedded in this window.</p>
+                <p class="subtle" id="voiceLabStatus">Local voice is closed.</p>
               </div>
-              <div class="voice-lab-shell">
-                <webview
-                  id="voiceLabView"
-                  class="voice-lab-view"
-                  src="https://agents-playground.livekit.io/#cam=1&mic=1&screen=1&video=1&audio=1&chat=1"
-                  partition="friday-voice-lab"
-                  allowpopups="true"
-                  allow="camera; microphone; display-capture"
-                ></webview>
+              <div class="voice-lab-shell local-voice-shell">
+                <div class="status-stack local-voice-stack">
+                  <span class="status-badge" data-tone="open">Transport: on device</span>
+                  <span class="status-badge" data-tone="open">Bridge: localhost MCP</span>
+                  <span class="status-badge" data-tone="open">Speech: Whisper + Piper</span>
+                </div>
               </div>
               <div class="voice-lab-footer">
-                <p class="card-copy">FRIDAY stays in this window while the cloud session runs.</p>
-                <button id="restartVoice" class="accent" type="button">Restart Voice</button>
+                <p class="card-copy">FRIDAY stays in this window while the entire voice stack runs on your machine.</p>
+                <button id="restartVoice" class="accent" type="button">Restart Local Voice</button>
               </div>
             </section>
 
@@ -166,7 +163,7 @@
               </div>
               <div class="runtime-rows">
                 <p class="card-copy">
-                  Firefox stays the default browser workflow, while the shell handles microphone access for the LiveKit view.
+                  Firefox stays the default browser workflow, while the shell handles the local microphone and speaker loop.
                 </p>
               </div>
             </section>

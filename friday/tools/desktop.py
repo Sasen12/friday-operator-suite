@@ -1588,7 +1588,7 @@ def register(mcp):
             action = "intl.cpl"
         elif normalized in {"color management", "color profile"}:
             action = "colorcpl"
-        elif normalized in {"display settings"}:
+        elif normalized in {"display settings", "brightness settings", "screen brightness", "brightness"}:
             action = "ms-settings:display"
         elif normalized in {"sound settings"}:
             action = "ms-settings:sound"

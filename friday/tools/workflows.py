@@ -17,7 +17,7 @@ import subprocess
 import time
 from difflib import SequenceMatcher
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 from . import desktop, system
 
@@ -230,7 +230,22 @@ def _unique_note_path(note_path: pathlib.Path) -> pathlib.Path:
 
 
 def _open_obsidian_with_path(path: pathlib.Path) -> dict[str, Any]:
-    launch = _launch_installed_app("Obsidian", extra_arguments=[str(path)], timeout=12.0)
+    target = path.expanduser()
+    if target.is_dir():
+        uri = f"obsidian://open?vault={quote(target.name, safe='')}"
+    else:
+        uri = f"obsidian://open?path={quote(target.resolve().as_posix(), safe='')}"
+
+    launch: dict[str, Any] = {"uri": uri, "target_path": str(target)}
+    try:
+        os.startfile(uri)
+        launch["launch_kind"] = "uri"
+        with contextlib.suppress(Exception):
+            launch["focused_window"] = desktop._focus_launched_window("Obsidian", timeout=12.0)
+    except Exception as exc:
+        launch["uri_error"] = str(exc)
+        launch.update(_launch_installed_app("Obsidian", extra_arguments=[str(target)], timeout=12.0))
+
     with contextlib.suppress(Exception):
         desktop.focus_window("Obsidian")
     return launch

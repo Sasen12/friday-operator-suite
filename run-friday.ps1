@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("all", "server", "voice", "playground", "console")]
+    [ValidateSet("all", "server", "voice", "local", "playground", "console")]
     [string]$Mode = "all"
 )
 
@@ -118,7 +118,7 @@ $Command
 
 $pythonPath = Get-X64PythonPath
 $env:UV_PYTHON = $pythonPath
-$env:FRIDAY_WAKE_WORD_MODE = if ($Mode -eq 'console' -or $Mode -eq 'server') { '0' } else { '1' }
+$env:FRIDAY_WAKE_WORD_MODE = '0'
 
 Write-Host "Using Python: $pythonPath"
 uv sync
@@ -126,24 +126,29 @@ uv sync
 switch ($Mode) {
     'server' {
         $env:FRIDAY_WAKE_WORD_MODE = '0'
-        uv run friday
+        uv run python server.py
     }
     'console' {
         $env:FRIDAY_WAKE_WORD_MODE = '0'
-        uv run friday_voice console --text
+        uv run python local_friday.py console
     }
     'voice' {
-        $env:FRIDAY_WAKE_WORD_MODE = '1'
-        uv run friday_voice dev
+        $env:FRIDAY_WAKE_WORD_MODE = '0'
+        uv run python local_friday.py
+    }
+    'local' {
+        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
+        Wait-ForPort -Port 8000 -TimeoutSeconds 60
+        Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
     'playground' {
-        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run friday' -WakeWordMode $false
+        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
         Wait-ForPort -Port 8000 -TimeoutSeconds 60
-        Start-FridayWindow -WindowTitle 'FRIDAY Voice (Playground)' -Command 'uv run friday_voice dev' -WakeWordMode $true
+        Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
     'all' {
-        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run friday' -WakeWordMode $false
+        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
         Wait-ForPort -Port 8000 -TimeoutSeconds 60
-        Start-FridayWindow -WindowTitle 'FRIDAY Voice (Playground)' -Command 'uv run friday_voice dev' -WakeWordMode $true
+        Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
 }

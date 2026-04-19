@@ -17,6 +17,7 @@ FRIDAY is a desktop operator. It can control Windows, work with files, automate 
 - Open Gmail and Calendar, search messages, open threads, draft mail, search events, and create calendar events.
 - Open Obsidian vaults, search notes, search note contents, create notes, append to notes, and replace text inside notes.
 - Open and search folders in File Explorer.
+- Listen and speak with a local Whisper + Piper speech stack when configured.
 - Save, list, run, and delete reusable macros.
 - Build short-form video projects from a description or script, save them in dated folders under `C:/Edits/AI Vids` by default, and render them locally when the ShortsMaker checkout is available.
 - Fetch world news and open the world monitor dashboard.
