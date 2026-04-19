@@ -87,6 +87,29 @@ function Wait-ForPort {
     throw "Timed out waiting for port $Port to open."
 }
 
+function Test-PortOpen {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [int]$TimeoutMilliseconds = 500
+    )
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if ($iar.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false) -and $client.Connected) {
+            $client.EndConnect($iar)
+            return $true
+        }
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+
+    return $false
+}
+
 function Start-FridayWindow {
     param(
         [Parameter(Mandatory = $true)]
@@ -116,6 +139,20 @@ $Command
     ) | Out-Null
 }
 
+function Start-ServerIfNeeded {
+    param(
+        [int]$Port = 8000
+    )
+
+    if (Test-PortOpen -Port $Port) {
+        Write-Host "Reusing existing FRIDAY server on port $Port."
+        return
+    }
+
+    Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
+    Wait-ForPort -Port $Port -TimeoutSeconds 60
+}
+
 $pythonPath = Get-X64PythonPath
 $env:UV_PYTHON = $pythonPath
 $env:FRIDAY_WAKE_WORD_MODE = '0'
@@ -126,6 +163,10 @@ uv sync
 switch ($Mode) {
     'server' {
         $env:FRIDAY_WAKE_WORD_MODE = '0'
+        if (Test-PortOpen -Port 8000) {
+            Write-Host 'Reusing existing FRIDAY server on port 8000.'
+            break
+        }
         uv run python server.py
     }
     'console' {
@@ -137,18 +178,15 @@ switch ($Mode) {
         uv run python local_friday.py
     }
     'local' {
-        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
-        Wait-ForPort -Port 8000 -TimeoutSeconds 60
+        Start-ServerIfNeeded
         Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
     'playground' {
-        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
-        Wait-ForPort -Port 8000 -TimeoutSeconds 60
+        Start-ServerIfNeeded
         Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
     'all' {
-        Start-FridayWindow -WindowTitle 'FRIDAY Server' -Command 'uv run python server.py' -WakeWordMode $false
-        Wait-ForPort -Port 8000 -TimeoutSeconds 60
+        Start-ServerIfNeeded
         Start-FridayWindow -WindowTitle 'FRIDAY Voice (Local)' -Command 'uv run python local_friday.py' -WakeWordMode $false
     }
 }

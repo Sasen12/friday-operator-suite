@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import warnings
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -182,39 +183,58 @@ def _record_utterance(
     threshold_factor = 32768.0
 
     microphone = sc.default_microphone()
+    capture_channels = 1
+    try:
+        capture_channels = max(1, min(2, int(getattr(microphone, "channels", 2) or 2)))
+    except Exception:
+        capture_channels = 1
 
-    with microphone.recorder(
-        samplerate=sample_rate,
-        blocksize=block_size,
-    ) as recorder:
-        for _ in range(max_blocks):
-            data = recorder.record(numframes=block_size)
-            block = np.asarray(data, dtype=np.float32)
-            if block.size == 0:
-                continue
+    recorder_blocksize = max(block_size * 4, 4096)
+    record_chunk_frames = max(512, block_size)
 
-            if block.ndim == 1:
-                block = block.reshape(-1, 1)
+    recorder_kwargs: dict[str, Any] = {
+        "samplerate": sample_rate,
+        "channels": capture_channels,
+        "blocksize": recorder_blocksize,
+    }
+    if os.getenv("FRIDAY_AUDIO_EXCLUSIVE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        recorder_kwargs["exclusive_mode"] = True
 
-            mono = block.mean(axis=1)
-            rms = float(np.sqrt(np.mean(mono * mono)))
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=getattr(sc, "SoundcardRuntimeWarning", RuntimeWarning),
+            message=".*data discontinuity in recording.*",
+        )
+        with microphone.recorder(**recorder_kwargs) as recorder:
+            for _ in range(max_blocks):
+                data = recorder.record(numframes=record_chunk_frames)
+                block = np.asarray(data, dtype=np.float32)
+                if block.size == 0:
+                    continue
 
-            if not started:
-                pre_roll.append(block.copy())
-                if rms >= start_threshold:
-                    started = True
-                    blocks.extend(pre_roll)
-                    pre_roll.clear()
+                if block.ndim == 1:
+                    block = block.reshape(-1, 1)
+
+                mono = block.mean(axis=1)
+                rms = float(np.sqrt(np.mean(mono * mono)))
+
+                if not started:
+                    pre_roll.append(block.copy())
+                    if rms >= start_threshold:
+                        started = True
+                        blocks.extend(pre_roll)
+                        pre_roll.clear()
+                        silence_run = 0
+                    continue
+
+                blocks.append(block.copy())
+                if rms < stop_threshold:
+                    silence_run += 1
+                    if (silence_run * record_chunk_frames / sample_rate) >= silence_seconds:
+                        break
+                else:
                     silence_run = 0
-                continue
-
-            blocks.append(block.copy())
-            if rms < stop_threshold:
-                silence_run += 1
-                if (silence_run * block_size / sample_rate) >= silence_seconds:
-                    break
-            else:
-                silence_run = 0
 
     if not blocks:
         return None

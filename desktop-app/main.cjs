@@ -228,6 +228,22 @@ function waitForPort(port, timeoutMs = 60_000) {
   });
 }
 
+function isPortOpen(port, host = '127.0.0.1', timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const finish = (open) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
 function spawnUv(args, label, extraEnv = {}) {
   const pythonPath = state.pythonPath || findX64PythonPath();
   if (!pythonPath) {
@@ -295,12 +311,18 @@ async function startConsoleDeck() {
   sendState();
 
   try {
-    serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
-    setState({ server: 'starting' });
     sendLog('launcher', `Using Python: ${pythonPath}`);
-    sendLog('launcher', 'Starting FRIDAY server...');
-    await waitForPort(serverPort, 60_000);
-    setState({ server: 'online' });
+    const serverAlreadyRunning = await isPortOpen(serverPort);
+    if (serverAlreadyRunning) {
+      setState({ server: 'online' });
+      sendLog('launcher', `Reusing existing FRIDAY server on port ${serverPort}.`);
+    } else {
+      serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
+      setState({ server: 'starting' });
+      sendLog('launcher', 'Starting FRIDAY server...');
+      await waitForPort(serverPort, 60_000);
+      setState({ server: 'online' });
+    }
     sendLog('launcher', 'Starting FRIDAY voice console...');
 
     voiceProcess = spawnUv(voiceConsoleLauncherArgs, 'voice', { FRIDAY_WAKE_WORD_MODE: '0' });
@@ -325,11 +347,17 @@ async function startPlayground() {
     sendState();
     sendLog('launcher', `Using Python: ${pythonPath}`);
 
-    serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
-    setState({ server: 'starting' });
-    sendLog('launcher', 'Starting FRIDAY server for local voice...');
-    await waitForPort(serverPort, 60_000);
-    setState({ server: 'online' });
+    const serverAlreadyRunning = await isPortOpen(serverPort);
+    if (serverAlreadyRunning) {
+      setState({ server: 'online' });
+      sendLog('launcher', `Reusing existing FRIDAY server on port ${serverPort}.`);
+    } else {
+      serverProcess = spawnUv(serverLauncherArgs, 'server', { FRIDAY_WAKE_WORD_MODE: '0' });
+      setState({ server: 'starting' });
+      sendLog('launcher', 'Starting FRIDAY server for local voice...');
+      await waitForPort(serverPort, 60_000);
+      setState({ server: 'online' });
+    }
     sendLog('launcher', 'Starting FRIDAY local voice runtime...');
 
     voiceProcess = spawnUv(voicePlaygroundLauncherArgs, 'voice', { FRIDAY_WAKE_WORD_MODE: '1' });
