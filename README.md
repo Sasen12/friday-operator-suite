@@ -2,6 +2,8 @@
 
 F.R.I.D.A.Y. is a local AI control stack for Windows that combines voice, browser, desktop, file, and workflow automation in one place.
 
+This repo is a remix of the original `SAGAR-TAMANG/friday-tony-stark-demo` project.
+
 It has three main pieces:
 
 | Component | What it does |
@@ -69,8 +71,8 @@ friday-tony-stark-demo/
 ### 2. Clone and install
 
 ```powershell
-git clone https://github.com/SAGAR-TAMANG/friday-tony-stark-demo.git
-cd friday-tony-stark-demo
+git clone https://github.com/Sasen12/friday-operator-suite.git
+cd friday-operator-suite
 uv sync
 ```
 
