@@ -57,21 +57,21 @@ try:
     from livekit.agents.llm import mcp
 
     # Plugins
-    from livekit.plugins import openai as lk_openai, sarvam, silero
+    from livekit.plugins import openai as lk_openai, silero
     _LIVEKIT_IMPORT_ERROR = None
 except ImportError as exc:
     JobContext = WorkerOptions = cli = None
     StopResponse = None
     Agent = AgentSession = None
     mcp = None
-    lk_openai = sarvam = silero = None
+    lk_openai = silero = None
     _LIVEKIT_IMPORT_ERROR = exc
 
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
 
-STT_PROVIDER       = "sarvam"
+STT_PROVIDER       = "whisper"
 TTS_PROVIDER       = "openai"
 
 OPENAI_LLM_MODEL   = "gpt-4o"

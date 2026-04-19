@@ -33,7 +33,7 @@ It has three main pieces:
 ## Project Layout
 
 ```text
-friday-tony-stark-demo/
+friday-operator-suite/
 |-- server.py            # MCP server entry point
 |-- agent_friday.py      # LiveKit voice agent entry point
 |-- desktop-app/         # Electron control deck
@@ -137,16 +137,11 @@ Keep it punchy, vertical, and save the final project locally.
 | `LIVEKIT_URL` | yes | Your LiveKit Cloud websocket URL |
 | `LIVEKIT_API_KEY` | yes | LiveKit API key |
 | `LIVEKIT_API_SECRET` | yes | LiveKit API secret |
-| `OPENAI_API_KEY` | yes | Used for the LLM and default TTS path |
+| `OPENAI_API_KEY` | yes | Used for the LLM, Whisper STT, and TTS |
 | `FRIDAY_SHORTS_OUTPUT_ROOT` | no | Default output folder for short-form video projects |
 | `SHORTS_MAKER_DIR` | no | Path to your local `shorts_maker` checkout |
-| `GROQ_API_KEY` | no | Optional provider key |
-| `SARVAM_API_KEY` | no | Optional STT provider key |
-| `DEEPGRAM_API_KEY` | no | Optional speech-related key |
-| `GOOGLE_APPLICATION_CREDENTIALS` | no | Optional Google Cloud auth path |
-| `SUPABASE_URL` | no | Optional ticketing backend URL |
-| `SUPABASE_API_KEY` | no | Optional ticketing backend key |
-| `GOOGLE_API_KEY` | no | Optional Google AI Studio key |
+
+The current voice stack is OpenAI-only for speech and language, so the voice side only needs the LiveKit keys plus `OPENAI_API_KEY`.
 
 ---
 

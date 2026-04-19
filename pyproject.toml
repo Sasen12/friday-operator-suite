@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastmcp",
     "httpx",
-    "livekit-agents[deepgram,groq,openai,sarvam,silero]>=1.5.1",
+    "livekit-agents[openai,silero]>=1.5.1",
     "playwright>=1.49.0",
     "pywinauto>=0.6.9",
     "python-dotenv",

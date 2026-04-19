@@ -22,6 +22,7 @@ mcp = FastMCP(
         "You can also use Start-menu search to find or launch things by name, change window state, wait for windows to appear, snap or move windows, and chain multiple desktop actions in a single workflow when needed. "
         "You can also search installed apps by name, focus apps by fuzzy window title, and operate app controls by label or OCR text, so fuzzy requests like Obsidian Notes should not be treated as missing too quickly. "
         "You also have browser-backed Gmail and Google Calendar workflows for mail and scheduling. "
+        "You also have an OpenAI-only voice stack for speech-to-text, language reasoning, and text-to-speech. "
         "You also have app-specific workflows for Obsidian, Firefox, and File Explorer, plus workflow batch actions for chaining those steps together, so use those when the user wants a known app to do a known task. "
         "You also have saved macros for replaying repeatable desktop, system, browser, and workflow routines. "
         "You also have short-form video tools for turning a prompt into a dated, upload-ready project and rendering it locally with a ShortsMaker checkout when available. "
