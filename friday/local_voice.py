@@ -34,6 +34,7 @@ else:
 from friday.speech import (
     LocalAudioFrame,
     build_local_speech_config,
+    warm_local_speech_models,
     synthesize_text_frames,
     transcribe_audio_frames,
 )
@@ -646,6 +647,9 @@ async def _run(mode: str) -> None:
     )
 
     async with _local_runtime_session() as (runtime, session):
+        print("Warming local speech models...", flush=True)
+        await warm_local_speech_models(runtime.local_speech)
+        print("Local speech models ready.", flush=True)
         try:
             await runtime.speak("You're awake late at night, boss? What are you up to?")
         except Exception as exc:

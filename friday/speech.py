@@ -17,6 +17,16 @@ from piper import PiperVoice, SynthesisConfig
 logger = logging.getLogger(__name__)
 
 _PIPER_VOICE_REPO = "rhasspy/piper-voices"
+_SUPPRESS_HF_WARNINGS = os.getenv("FRIDAY_SUPPRESS_HF_WARNINGS", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+if _SUPPRESS_HF_WARNINGS:
+    for name in ("huggingface_hub", "huggingface_hub.utils._http"):
+        logging.getLogger(name).setLevel(logging.ERROR)
 
 
 @dataclass(frozen=True)
@@ -261,3 +271,22 @@ async def synthesize_text_frames(
         return frames
 
     return await asyncio.to_thread(_run_synthesis)
+
+
+async def warm_local_speech_models(config: LocalSpeechConfig) -> None:
+    def _warm() -> None:
+        _load_whisper_model(
+            config.stt_model,
+            config.stt_device,
+            config.stt_compute_type,
+            str(config.stt_download_root),
+            config.stt_local_files_only,
+        )
+        _load_piper_voice(
+            config.tts_model,
+            str(config.tts_config_path) if config.tts_config_path else "",
+            config.tts_use_cuda,
+            str(config.tts_download_dir),
+        )
+
+    await asyncio.to_thread(_warm)
