@@ -657,7 +657,13 @@ async def _run(mode: str) -> None:
         if mode == "console":
             await runtime.console_loop(session)
         else:
-            await runtime.voice_loop(session)
+            text_task = asyncio.create_task(runtime.console_loop(session))
+            try:
+                await runtime.voice_loop(session)
+            finally:
+                text_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await text_task
 
 
 def main() -> None:

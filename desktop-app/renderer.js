@@ -273,12 +273,13 @@ function renderState(next) {
     setVoiceLabStatus(localStatus);
   }
 
-  const consoleActive = state.mode === 'console' && state.voice !== 'stopped';
+  const consoleActive =
+    state.voice !== 'stopped' && (state.mode === 'console' || state.mode === 'local');
   if (elements.commandInput) {
     elements.commandInput.disabled = !consoleActive;
     elements.commandInput.placeholder = consoleActive
       ? 'Type a message for FRIDAY...'
-      : 'Launch the console deck to type here...';
+      : 'Launch the console deck or local session to type here...';
   }
 
   const sendButton = elements.inputForm?.querySelector('button[type="submit"]');
